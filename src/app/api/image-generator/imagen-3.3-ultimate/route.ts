@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
     const imagePath = `imagen-3.3-ultimate/${id}.png`;
 
     const { error: uploadError } = await supabase.storage
-      .from("ai-image-generator")
+      .from("ai-images")
       .upload(imagePath, watermarkedImageBuffer, {
         contentType: "image/png",
         upsert: true
