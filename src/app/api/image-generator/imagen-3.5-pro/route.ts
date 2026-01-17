@@ -15,8 +15,8 @@ function getRandomBotUA(): string {
   return BOT_USER_AGENTS[Math.floor(Math.random() * BOT_USER_AGENTS.length)];
 }
 
-async function generateFromMagicStudio(prompt: string): Promise<Buffer> {
-  const apiUrl = `https://api.siputzx.my.id/api/ai/magicstudio?prompt=${encodeURIComponent(prompt)}`;
+async function generateFromFlux(prompt: string): Promise<Buffer> {
+  const apiUrl = `https://api.siputzx.my.id/api/ai/flux?prompt=${encodeURIComponent(prompt)}`;
   
   const res = await fetch(apiUrl, {
     method: "GET",
@@ -27,7 +27,7 @@ async function generateFromMagicStudio(prompt: string): Promise<Buffer> {
   });
   
   if (!res.ok) {
-    throw new Error("Failed to generate image from MagicStudio API");
+    throw new Error("Failed to generate image from Flux API");
   }
   
   const contentType = res.headers.get("content-type") || "";
@@ -45,11 +45,11 @@ async function generateFromMagicStudio(prompt: string): Promise<Buffer> {
       if (!imgRes.ok) throw new Error("Failed to download generated image");
       return Buffer.from(await imgRes.arrayBuffer());
     }
-    throw new Error("Invalid response from MagicStudio API");
+    throw new Error("Invalid response from Flux API");
   }
   
   if (!contentType.includes("image")) {
-    throw new Error("MagicStudio API did not return an image");
+    throw new Error("Flux API did not return an image");
   }
   
   return Buffer.from(await res.arrayBuffer());
@@ -58,7 +58,6 @@ async function generateFromMagicStudio(prompt: string): Promise<Buffer> {
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const prompt = searchParams.get("prompt");
-  const models = searchParams.get("models") || "cyberpunk style";
 
   const userIP = req.headers.get("x-forwarded-for")?.split(",")[0] || "127.0.0.1";
   const userAgent = req.headers.get("user-agent") || "browser";
@@ -70,7 +69,7 @@ export async function GET(req: NextRequest) {
   await incrementStat("total_requests");
 
   try {
-    const imageBuffer = await generateFromMagicStudio(prompt);
+    const imageBuffer = await generateFromFlux(prompt);
 
     const watermarkUrl = "https://watermark-ai-imagenerator.assetsvsiddev.workers.dev/";
     const watermarkRes = await fetch(watermarkUrl);
@@ -103,7 +102,7 @@ export async function GET(req: NextRequest) {
       .toBuffer();
 
     const id = crypto.randomBytes(4).toString("hex");
-    const imagePath = `imagen-3.3-ultimate/${id}.png`;
+    const imagePath = `imagen-3.5-pro/${id}.png`;
 
     const { error: uploadError } = await supabase.storage
       .from("ai-images")
@@ -128,7 +127,7 @@ export async function GET(req: NextRequest) {
     await logApiRequest({
       ip_address: userIP,
       method: "GET",
-      router: "/api/image-generator/imagen-3.3-ultimate",
+      router: "/api/image-generator/imagen-3.5-pro",
       status: 200,
       user_agent: userAgent
     });
@@ -137,17 +136,17 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "image/png",
-        "X-Result-URL": `/image/imagen-3.3-ultimate/result/${id}`
+        "X-Result-URL": `/image/imagen-3.5-pro/result/${id}`
       }
     });
 
   } catch (error: any) {
-    console.error("Imagen 3.3 Ultimate API Error:", error);
+    console.error("Imagen 3.5 Pro API Error:", error);
     await incrementStat("total_errors");
     await logApiRequest({
       ip_address: userIP,
       method: "GET",
-      router: "/api/image-generator/imagen-3.3-ultimate",
+      router: "/api/image-generator/imagen-3.5-pro",
       status: 500,
       user_agent: userAgent
     });
