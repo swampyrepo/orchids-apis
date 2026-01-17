@@ -2,6 +2,43 @@ import { NextRequest, NextResponse } from "next/server";
 import { incrementStat, logApiRequest, supabase } from "@/lib/supabase";
 import { prettyJson } from "@/lib/utils";
 
+async function tryTikwm(url: string, ua: string): Promise<{ musicUrl: string } | null> {
+  try {
+    const targetUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`;
+    const response = await fetch(targetUrl, {
+      headers: { "User-Agent": ua }
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data.code !== 0 || !data.data) return null;
+    const musicUrl = data.data.music || data.data.music_info?.play;
+    if (!musicUrl) return null;
+    return { musicUrl };
+  } catch {
+    return null;
+  }
+}
+
+async function tryCobalt(url: string): Promise<{ musicUrl: string } | null> {
+  const instances = ["https://dwnld.nichind.dev", "https://cobalt.nohello.net"];
+  for (const instance of instances) {
+    try {
+      const response = await fetch(instance, {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ url, downloadMode: "audio", audioFormat: "mp3" }),
+      });
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (data.status === "error") continue;
+      if (data.url) return { musicUrl: data.url };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const tiktokvid_url = searchParams.get("tiktokvid_url");
@@ -17,29 +54,17 @@ export async function GET(req: NextRequest) {
   await incrementStat("total_hits");
 
   try {
-    const targetUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(tiktokvid_url)}`;
+    let result = await tryTikwm(tiktokvid_url, realUA);
+    if (!result) {
+      result = await tryCobalt(tiktokvid_url);
+    }
     
-    const response = await fetch(targetUrl, {
-      headers: {
-        "User-Agent": realUA
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch from provider: ${response.status} ${response.statusText}`);
+    if (!result) {
+      throw new Error("All providers failed to get music URL");
     }
 
-    const data = await response.json();
-
-    if (data.code !== 0 || !data.data || (!data.data.music && !data.data.music_info?.play)) {
-      throw new Error(data.msg || "Failed to get MP3 from provider response");
-    }
-
-    const musicUrl = data.data.music || data.data.music_info.play;
-    const musicResponse = await fetch(musicUrl, {
-      headers: {
-        "User-Agent": realUA
-      }
+    const musicResponse = await fetch(result.musicUrl, {
+      headers: { "User-Agent": realUA }
     });
     
     if (!musicResponse.ok) {
@@ -47,33 +72,30 @@ export async function GET(req: NextRequest) {
     }
 
     const buffer = await musicResponse.arrayBuffer();
-    const contentType = "audio/mpeg";
-
-    // Store in Supabase
     const id = crypto.randomUUID();
     const fileName = `${id}.mp3`;
+
     const { error: uploadError } = await supabase.storage
       .from("tiktok-mp3s")
       .upload(fileName, buffer, {
-        contentType: contentType,
-        upsert: true
+        contentType: "audio/mpeg",
+        upsert: true,
       });
 
     if (uploadError) {
       throw new Error(`Failed to upload to storage: ${uploadError.message}`);
     }
 
-    // Save metadata
     const { error: dbError } = await supabase
       .from("tiktok_mp3s")
       .insert({
         id,
         tiktok_url: tiktokvid_url,
-        mp3_path: fileName
+        mp3_path: fileName,
       });
 
     if (dbError) {
-      throw new Error(`Failed to save metadata: ${dbError.message}`);
+      console.error("DB Error:", dbError);
     }
 
     await incrementStat("total_success");
@@ -82,39 +104,39 @@ export async function GET(req: NextRequest) {
       method: "GET",
       router: "/api/downloader/tiktokvid2mp3",
       status: 200,
-      user_agent: realUA
+      user_agent: realUA,
     });
-
-    const resultUrl = `${req.nextUrl.origin}/result/tiktokvid2mp3/${id}`;
 
     if (instantAppearance) {
       return new NextResponse(buffer, {
         status: 200,
-        headers: { 
-          "Content-Type": contentType,
-          "Content-Disposition": `inline; filename="tiktok_${id}.mp3"`
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Content-Disposition": `inline; filename="tiktok_${id}.mp3"`,
         },
       });
     }
+
+    const resultUrl = `https://apis.visora.my.id/result/tiktokvid2mp3/${id}`;
 
     return prettyJson({
       status: true,
       result: {
         id,
         tiktok_url: tiktokvid_url,
-        result_url: resultUrl
-      }
+        result_url: resultUrl,
+      },
     });
 
   } catch (error: any) {
-    console.error("TikTok to MP3 API Error:", error);
+    console.error("TikTok MP3 API Error:", error);
     await incrementStat("total_errors");
     await logApiRequest({
       ip_address: userIP,
       method: "GET",
       router: "/api/downloader/tiktokvid2mp3",
       status: 500,
-      user_agent: realUA
+      user_agent: realUA,
     });
     return prettyJson({ status: false, error: error.message }, 500);
   }
